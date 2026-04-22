@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function - foydalanuvchi tizimga kirganmi?
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function - foydalanuvchi ma'lumotlari mavjudmi tekshirish
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    // Helper function - foydalanuvchi ma'lumotlarini olish (faqat mavjud bo'lsa)
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    // Helper function - foydalanuvchi roli (xavfsiz)
+    function getUserRole() {
+      return userExists() ? getUserData().role : null;
+    }
+    
+    // Helper function - admin ekanligini tekshirish
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+    
+    // Helper function - doktor ekanligini tekshirish
+    function isDoctor() {
+      return isAuthenticated() && getUserRole() == 'doctor';
+    }
+    
+    // Helper function - bemor ekanligini tekshirish
+    function isPatient() {
+      return isAuthenticated() && getUserRole() == 'patient';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // O'z profilini o'qish yoki admin bo'lsa barcha profillarni
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Yangi foydalanuvchi ro'yxatdan o'tganda (bemor) yoki admin xodim yaratganda
+      allow create: if isAuthenticated() && (
+        (request.auth.uid == userId && request.resource.data.role == 'patient') ||
+        isAdmin()
+      );
+      
+      // O'z profilini yangilash yoki admin tomonidan yangilash
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Faqat admin o'chirishi mumkin
+      allow delete: if isAdmin();
+    }
+    
+    // Doctors collection
+    match /doctors/{doctorId} {
+      // Hammaga o'qish ruxsati (bemorlar doktorlarni ko'rishi kerak)
+      allow read: if isAuthenticated();
+      
+      // Faqat admin qo'shish/o'zgartirish/o'chirish mumkin
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // Appointments collection
+    match /appointments/{appointmentId} {
+      // Bemorlar faqat o'z navbatlarini, doktorlar o'z bemorlarini, admin hammani ko'radi
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.patientId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid
+      );
+      
+      // Bemor yangi navbat yaratishi mumkin
+      allow create: if isAuthenticated() && (
+        (isPatient() && request.resource.data.patientId == request.auth.uid) ||
+        isAdmin()
+      );
+      
+      // Bemor o'z navbatini, doktor o'z navbatlarini, admin hammani yangilashi mumkin
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (isPatient() && resource.data.patientId == request.auth.uid) ||
+        (isDoctor() && resource.data.doctorId == request.auth.uid)
+      );
+      
+      // Faqat admin va bemor (o'z navbatini) o'chirishi mumkin
+      allow delete: if isAuthenticated() && (
+        isAdmin() ||
+        (isPatient() && resource.data.patientId == request.auth.uid)
+      );
+    }
+    
+    // Rooms collection
+    match /rooms/{roomId} {
+      // Hammaga o'qish ruxsati
+      allow read: if isAuthenticated();
+      
+      // Faqat admin qo'shish/o'zgartirish/o'chirish mumkin
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
